@@ -119,12 +119,7 @@ class FDA(ERM):
                                   hparams)
 
     def update(self, minibatches, unlabeled=None):
-        assert len(minibatches) == 1, "FDA use DatasetAll"
-        assert len(minibatches[0]) == 2, "x and y"
-        x = minibatches[0][0]
-        y = minibatches[0][1]
-        all_x = torch.cat(x, dim=0)
-        all_y = torch.cat(y, dim=0)
+        all_x, all_y = minibatches
         loss = F.cross_entropy(self.predict(all_x), all_y)
 
         self.optimizer.zero_grad()

@@ -118,8 +118,7 @@ if __name__ == "__main__":
         device = "cpu"
 
     if args.dataset in vars(datasets):
-        dataset = vars(datasets)[args.dataset](args.data_dir, args.test_envs,
-                                               hparams, args.algorithm)
+        dataset = vars(datasets)[args.dataset](args.data_dir)
     else:
         raise NotImplementedError
 
@@ -137,44 +136,49 @@ if __name__ == "__main__":
     # be discared at training.
     in_splits = []
     out_splits = []
-    uda_splits = []
+
     for env_i, env in enumerate(dataset):
-        uda = []
+
+        # add type to determine the transform
+        if env_i in args.test_envs:
+            in_type = "test"
+            out_type = "test"
+        elif args.algorithm == 'FDA':
+            in_type = "none"
+            out_type = "valid"
+        else:
+            in_type = "train"
+            out_type = "valid"
 
         out, in_ = misc.split_dataset(env,
                                       int(len(env) * args.holdout_fraction),
                                       misc.seed_hash(args.trial_seed, env_i))
 
-        if env_i in args.test_envs:
-            uda, in_ = misc.split_dataset(
-                in_, int(len(in_) * args.uda_holdout_fraction),
-                misc.seed_hash(args.trial_seed, env_i))
-
         if hparams['class_balanced']:
             in_weights = misc.make_weights_for_balanced_classes(in_)
             out_weights = misc.make_weights_for_balanced_classes(out)
-            if uda is not None:
-                uda_weights = misc.make_weights_for_balanced_classes(uda)
         else:
-            in_weights, out_weights, uda_weights = None, None, None
+            in_weights, out_weights = None, None
+
+        # set transforms
+        misc.set_transforms(in_, in_type, hparams)
+        misc.set_transforms(out, out_type, hparams)
+
         in_splits.append((in_, in_weights))
         out_splits.append((out, out_weights))
-        if len(uda):
-            uda_splits.append((uda, uda_weights))
-
-    if args.task == "domain_adaptation" and len(uda_splits) == 0:
-        raise ValueError("Not enough unlabeled samples for domain adaptation.")
 
     if args.algorithm == 'FDA':
         train_dataset = DatasetAll_FDA([
-            env for i, (env, _) in enumerate(in_splits) if i in args.test_envs
+            env for i, (env, _) in enumerate(in_splits)
+            if i not in args.test_envs
         ])
 
-        train_loader = InfiniteDataLoader(dataset=train_dataset,
-                                          weights=None,
-                                          batch_size=hparams['batch_size'] //
-                                          2,
-                                          num_workers=dataset.N_WORKERS)
+        train_loader = InfiniteDataLoader(
+            dataset=train_dataset,
+            weights=None,
+            batch_size=hparams['batch_size'] *
+            (len(dataset) - len(args.test_envs)) // 2,
+            num_workers=dataset.N_WORKERS)
     else:
         train_loaders = [
             InfiniteDataLoader(dataset=env,
@@ -185,30 +189,16 @@ if __name__ == "__main__":
             if i not in args.test_envs
         ]
 
-    uda_loaders = [
-        InfiniteDataLoader(dataset=env,
-                           weights=env_weights,
-                           batch_size=hparams['batch_size'],
-                           num_workers=dataset.N_WORKERS)
-        for i, (env, env_weights) in enumerate(uda_splits)
-        if i in args.test_envs
-    ]
-
     eval_loaders = [
         FastDataLoader(dataset=env,
                        batch_size=64,
                        num_workers=dataset.N_WORKERS)
-        for env, _ in (in_splits + out_splits + uda_splits)
+        for env, _ in (in_splits + out_splits)
     ]
-    eval_weights = [
-        None for _, weights in (in_splits + out_splits + uda_splits)
-    ]
+    eval_weights = [None for _, weights in (in_splits + out_splits)]
     eval_loader_names = ['env{}_in'.format(i) for i in range(len(in_splits))]
     eval_loader_names += [
         'env{}_out'.format(i) for i in range(len(out_splits))
-    ]
-    eval_loader_names += [
-        'env{}_uda'.format(i) for i in range(len(uda_splits))
     ]
 
     algorithm_class = algorithms.get_algorithm_class(args.algorithm)
@@ -217,15 +207,14 @@ if __name__ == "__main__":
 
     if algorithm_dict is not None:
         algorithm.load_state_dict(algorithm_dict)
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
+
     algorithm.to(device)
 
     if args.algorithm == 'FDA':
-        train_minibatches_iterator = train_loader
+        train_minibatches_iterator = iter(train_loader)
     else:
         train_minibatches_iterator = zip(*train_loaders)
 
-    uda_minibatches_iterator = zip(*uda_loaders)
     checkpoint_vals = collections.defaultdict(lambda: [])
 
     steps_per_epoch = min(
@@ -250,15 +239,17 @@ if __name__ == "__main__":
     last_results_keys = None
     for step in range(start_step, n_steps):
         step_start_time = time.time()
-        minibatches_device = [(x.to(device), y.to(device))
-                              for x, y in next(train_minibatches_iterator)]
-        if args.task == "domain_adaptation":
-            uda_device = [
-                x.to(device) for x, _ in next(uda_minibatches_iterator)
-            ]
+
+        if args.algorithm == 'FDA':
+            x, y = next(train_minibatches_iterator)
+            all_x = torch.cat(x, dim=0).to(device)
+            all_y = torch.cat(y, dim=0).to(device)
+            minibatches_device = (all_x, all_y)
         else:
-            uda_device = None
-        step_vals = algorithm.update(minibatches_device, uda_device)
+            minibatches_device = [(x.to(device), y.to(device))
+                                  for x, y in next(train_minibatches_iterator)]
+
+        step_vals = algorithm.update(minibatches_device)
         checkpoint_vals['step_time'].append(time.time() - step_start_time)
 
         for key, val in step_vals.items():
@@ -275,6 +266,11 @@ if __name__ == "__main__":
 
             evals = zip(eval_loader_names, eval_loaders, eval_weights)
             for name, loader, weights in evals:
+                env_name, inout = name.split("_")
+                env_num = int(env_name[3:])
+                skip_eval = (inout == "in" and env_num not in args.test_envs)
+                if skip_eval:
+                    continue
                 acc = misc.accuracy(algorithm, loader, weights, device)
                 results[name + '_acc'] = acc
 

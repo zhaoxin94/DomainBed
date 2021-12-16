@@ -18,7 +18,7 @@ class DatasetAll_FDA(Dataset):
             transforms.RandomResizedCrop(224, scale=(0.7, 1.0)),
             transforms.RandomHorizontalFlip(),
             transforms.ColorJitter(0.3, 0.3, 0.3, 0.3),
-            transforms.RandomGrayscale()
+            transforms.RandomGrayscale(), lambda x: np.asarray(x)
         ])
         self.post_transform = transforms.Compose([
             transforms.ToTensor(),
@@ -48,7 +48,7 @@ class DatasetAll_FDA(Dataset):
         img = self.post_transform(img)
         img_mix = self.post_transform(img_mix)
 
-        img = [img, img_s]
+        img = [img, img_mix]
         label = [label, label]
 
         return img, label
