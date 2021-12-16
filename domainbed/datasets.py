@@ -177,7 +177,7 @@ class RotatedMNIST(MultipleEnvironmentMNIST):
 
 
 class MultipleEnvironmentImageFolder(MultipleDomainDataset):
-    def __init__(self, root, test_envs, augment, hparams):
+    def __init__(self, root, test_envs, augment, hparams, algorithm):
         super().__init__()
         environments = [f.name for f in os.scandir(root) if f.is_dir()]
         environments = sorted(environments)
@@ -199,6 +199,9 @@ class MultipleEnvironmentImageFolder(MultipleDomainDataset):
             transforms.Normalize(
                 mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
+
+        if algorithm == 'FDA':
+            augment_transform = None
 
         self.datasets = []
         for i, environment in enumerate(environments):
