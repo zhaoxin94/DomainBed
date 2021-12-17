@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.autograd as autograd
 from torch.autograd import Variable
+from torch.cuda.amp import autocast
 
 import copy
 import numpy as np
@@ -66,6 +67,8 @@ class Algorithm(torch.nn.Module):
         super(Algorithm, self).__init__()
         self.hparams = hparams
 
+        self.scaler = torch.cuda.amp.GradScaler()
+
     def update(self, minibatches, unlabeled=None):
         """
         Perform one update step, given a list of (x, y) tuples for all
@@ -99,13 +102,16 @@ class ERM(Algorithm):
             weight_decay=self.hparams['weight_decay'])
 
     def update(self, minibatches, unlabeled=None):
-        all_x = torch.cat([x for x, y in minibatches])
-        all_y = torch.cat([y for x, y in minibatches])
-        loss = F.cross_entropy(self.predict(all_x), all_y)
+        with autocast():
+            all_x = torch.cat([x for x, y in minibatches])
+            all_y = torch.cat([y for x, y in minibatches])
+            loss = F.cross_entropy(self.predict(all_x), all_y)
 
         self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+        self.scaler.scale(loss).backward()
+        self.scaler.step(self.optimizer)
+
+        self.scaler.update()
 
         return {'loss': loss.item()}
 
@@ -119,12 +125,15 @@ class FDA(ERM):
                                   hparams)
 
     def update(self, minibatches, unlabeled=None):
-        all_x, all_y = minibatches
-        loss = F.cross_entropy(self.predict(all_x), all_y)
+        with autocast():
+            all_x, all_y = minibatches
+            loss = F.cross_entropy(self.predict(all_x), all_y)
 
         self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+        self.scaler.scale(loss).backward()
+        self.scaler.step(self.optimizer)
+
+        self.scaler.update()
 
         return {'loss': loss.item()}
 
