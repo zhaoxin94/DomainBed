@@ -101,17 +101,6 @@ class DatasetAll(Dataset):
     """
     def __init__(self, data_list):
         self.data = ConcatDataset(data_list)
-        self.pre_transform = transforms.Compose([
-            transforms.RandomResizedCrop(224, scale=(0.7, 1.0)),
-            transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(0.3, 0.3, 0.3, 0.3),
-            transforms.RandomGrayscale()
-        ])
-        self.post_transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225])
-        ])
 
     def __len__(self):
         return len(self.data)
